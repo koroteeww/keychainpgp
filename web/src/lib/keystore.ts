@@ -60,7 +60,7 @@ async function encryptSecret(
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    plaintext,
+    new Uint8Array(plaintext),
   );
   return {
     ciphertext: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
@@ -73,8 +73,8 @@ async function decryptSecret(
   ivBase64: string,
 ): Promise<Uint8Array> {
   const key = await getWrappingKey();
-  const iv = Uint8Array.from(atob(ivBase64), (c) => c.charCodeAt(0));
-  const data = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
+  const iv = new Uint8Array(Array.from(atob(ivBase64), (c) => c.charCodeAt(0)));
+  const data = new Uint8Array(Array.from(atob(ciphertext), (c) => c.charCodeAt(0)));
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
     key,

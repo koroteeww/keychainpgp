@@ -41,7 +41,35 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
-      - run: cargo test --workspace --exclude keychainpgp-ui --exclude keychainpgp-wasm
+      - run: cargo test --workspace --exclude keychainpgp-ui
+
+  test-ui:
+    name: Test UI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/keychainpgp-ui/frontend/package-lock.json
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+      - name: Build frontend
+        run: |
+          npm ci
+          npx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
+          npm run build
+        working-directory: crates/keychainpgp-ui/frontend
+      - run: cargo test -p keychainpgp-ui
 
   clippy:
     name: Clippy

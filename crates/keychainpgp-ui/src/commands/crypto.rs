@@ -426,3 +426,224 @@ pub fn clear_passphrase_cache(state: State<'_, AppState>) -> Result<(), String> 
     cache.clear_all();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use keychainpgp_core::types::{KeyGenOptions, UserId};
+    use keychainpgp_keys::storage::KeyRecord;
+    use secrecy::ExposeSecret;
+
+    /// Create an AppState backed by a temporary directory.
+    fn setup() -> (AppState, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = AppState::initialize_with_dir(tmp.path()).unwrap();
+        (state, tmp)
+    }
+
+    /// Generate a key pair, store it in the keyring, and return the fingerprint.
+    fn generate_and_store(state: &AppState, name: &str, email: &str) -> String {
+        generate_and_store_with_passphrase(state, name, email, None)
+    }
+
+    /// Generate a key pair with optional passphrase, store it, return the fingerprint.
+    fn generate_and_store_with_passphrase(
+        state: &AppState,
+        name: &str,
+        email: &str,
+        passphrase: Option<&str>,
+    ) -> String {
+        let user_id = UserId::new(name, email);
+        let mut options = KeyGenOptions::new(user_id);
+        if let Some(pp) = passphrase {
+            options = options.with_passphrase(SecretBox::new(Box::new(pp.as_bytes().to_vec())));
+        }
+
+        let key_pair = state.engine.generate_key_pair(options).unwrap();
+        let info = state.engine.inspect_key(&key_pair.public_key).unwrap();
+
+        let record = KeyRecord {
+            fingerprint: key_pair.fingerprint.0.clone(),
+            name: Some(name.to_string()),
+            email: Some(email.to_string()),
+            algorithm: info.algorithm.to_string(),
+            created_at: info.created_at,
+            expires_at: info.expires_at,
+            trust_level: 2,
+            is_own_key: true,
+            pgp_data: key_pair.public_key.clone(),
+        };
+
+        let keyring = state.keyring.lock().unwrap();
+        keyring
+            .store_generated_key(record, key_pair.secret_key.expose_secret())
+            .unwrap();
+
+        key_pair.fingerprint.0.clone()
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let (state, _tmp) = setup();
+        let fp = generate_and_store(&state, "Alice", "alice@test.com");
+
+        let plaintext = "Hello, this is a secret message!";
+        let ciphertext = encrypt_impl(&state, plaintext, &[fp]).unwrap();
+        assert!(ciphertext.contains("BEGIN PGP MESSAGE"));
+
+        let result = decrypt_impl(&state, &ciphertext, None).unwrap();
+        assert!(result.success);
+        assert_eq!(result.plaintext, plaintext);
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_with_passphrase() {
+        let (state, _tmp) = setup();
+        let fp = generate_and_store_with_passphrase(
+            &state,
+            "Bob",
+            "bob@test.com",
+            Some("strong-passphrase"),
+        );
+
+        let plaintext = "Passphrase-protected message";
+        let ciphertext = encrypt_impl(&state, plaintext, &[fp]).unwrap();
+
+        let result = decrypt_impl(&state, &ciphertext, Some("strong-passphrase")).unwrap();
+        assert!(result.success);
+        assert_eq!(result.plaintext, plaintext);
+    }
+
+    #[test]
+    fn test_decrypt_wrong_passphrase_fails() {
+        let (state, _tmp) = setup();
+        let fp = generate_and_store_with_passphrase(
+            &state,
+            "Carol",
+            "carol@test.com",
+            Some("correct-passphrase"),
+        );
+
+        let plaintext = "Secret";
+        let ciphertext = encrypt_impl(&state, plaintext, &[fp]).unwrap();
+
+        let result = decrypt_impl(&state, &ciphertext, Some("wrong-passphrase"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sign_verify_roundtrip() {
+        let (state, _tmp) = setup();
+        generate_and_store(&state, "Dave", "dave@test.com");
+
+        let plaintext = "This message is authentic.";
+        let signed = sign_impl(&state, plaintext, None).unwrap();
+        assert!(signed.contains("BEGIN PGP MESSAGE"));
+
+        let result = verify_impl(&state, &signed).unwrap();
+        assert!(result.valid);
+        assert_eq!(result.signer_name.as_deref(), Some("Dave"));
+    }
+
+    #[test]
+    fn test_sign_verify_with_passphrase() {
+        let (state, _tmp) = setup();
+        generate_and_store_with_passphrase(&state, "Eve", "eve@test.com", Some("sign-passphrase"));
+
+        let plaintext = "Signed with passphrase";
+        let signed = sign_impl(&state, plaintext, Some("sign-passphrase")).unwrap();
+
+        let result = verify_impl(&state, &signed).unwrap();
+        assert!(result.valid);
+    }
+
+    #[test]
+    fn test_decrypt_no_own_keys() {
+        let (state, _tmp) = setup();
+        // No keys stored — decrypt should fail
+        let pgp_msg = "-----BEGIN PGP MESSAGE-----\n\nwA0D\n-----END PGP MESSAGE-----";
+        let result = decrypt_impl(&state, pgp_msg, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("don't have any private keys"));
+    }
+
+    #[test]
+    fn test_decrypt_wrong_key_fails() {
+        let (state, _tmp) = setup();
+
+        // Generate two key pairs
+        let fp_alice = generate_and_store(&state, "Alice2", "alice2@test.com");
+        let _fp_bob = generate_and_store(&state, "Bob2", "bob2@test.com");
+
+        // Encrypt only for Alice
+        let ciphertext = encrypt_impl(&state, "For Alice only", &[fp_alice.clone()]).unwrap();
+
+        // Delete Alice's key, keep only Bob's
+        {
+            let keyring = state.keyring.lock().unwrap();
+            keyring.delete_key(&fp_alice).unwrap();
+        }
+
+        // Bob cannot decrypt Alice's message
+        let result = decrypt_impl(&state, &ciphertext, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_wrong_key_fails() {
+        let (state, _tmp) = setup();
+        let fp_signer = generate_and_store(&state, "Signer", "signer@test.com");
+
+        let signed = sign_impl(&state, "Authentic message", None).unwrap();
+
+        // Delete the signer key
+        {
+            let keyring = state.keyring.lock().unwrap();
+            keyring.delete_key(&fp_signer).unwrap();
+        }
+
+        // Add a different key
+        generate_and_store(&state, "Other", "other@test.com");
+
+        // Verification should fail (wrong key)
+        let result = verify_impl(&state, &signed).unwrap();
+        assert!(!result.valid);
+    }
+
+    #[test]
+    fn test_full_crypto_roundtrip() {
+        let (state, _tmp) = setup();
+
+        // Generate sender and recipient
+        let fp_sender = generate_and_store(&state, "Sender", "sender@test.com");
+        let fp_recipient = generate_and_store(&state, "Recipient", "recipient@test.com");
+
+        let plaintext = "Confidential message from Sender to Recipient";
+
+        // Encrypt for recipient
+        let ciphertext = encrypt_impl(&state, plaintext, &[fp_recipient.clone()]).unwrap();
+
+        // Recipient decrypts
+        let decrypted = decrypt_impl(&state, &ciphertext, None).unwrap();
+        assert!(decrypted.success);
+        assert_eq!(decrypted.plaintext, plaintext);
+
+        // Sign by sender (sign_impl tries all own keys, sender's key should work)
+        let signed = sign_impl(&state, plaintext, None).unwrap();
+
+        // Verify signature
+        let verified = verify_impl(&state, &signed).unwrap();
+        assert!(verified.valid);
+
+        // Delete sender, keep recipient — re-sign should still work with recipient's key
+        {
+            let keyring = state.keyring.lock().unwrap();
+            keyring.delete_key(&fp_sender).unwrap();
+        }
+        let signed2 = sign_impl(&state, "Another message", None).unwrap();
+        let verified2 = verify_impl(&state, &signed2).unwrap();
+        assert!(verified2.valid);
+        assert_eq!(verified2.signer_name.as_deref(), Some("Recipient"));
+    }
+}

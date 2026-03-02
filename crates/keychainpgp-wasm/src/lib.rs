@@ -213,3 +213,244 @@ pub fn inspect_key(key_data: &str) -> Result<JsValue, JsError> {
 
     serde_wasm_bindgen::to_value(&js_info).map_err(|e| JsError::new(&e.to_string()))
 }
+
+/// Native tests exercising the same crypto operations as the WASM bindings.
+///
+/// These run with `cargo test -p keychainpgp-wasm` (no browser needed) and
+/// validate the Rust layer that backs every JS-exposed function.
+#[cfg(test)]
+mod tests {
+    use keychainpgp_core::engine::CryptoEngine;
+    use keychainpgp_core::sequoia_engine::SequoiaEngine;
+    use keychainpgp_core::types::{KeyGenOptions, UserId};
+    use secrecy::ExposeSecret;
+
+    /// Helper: generate a key pair, return (public_key string, secret_key string, fingerprint).
+    fn gen_key(name: &str, email: &str) -> (String, String, String) {
+        gen_key_with_passphrase(name, email, None)
+    }
+
+    fn gen_key_with_passphrase(
+        name: &str,
+        email: &str,
+        passphrase: Option<&str>,
+    ) -> (String, String, String) {
+        let engine = SequoiaEngine::new();
+        let mut options = KeyGenOptions::new(UserId::new(name, email));
+        if let Some(pp) = passphrase {
+            options =
+                options.with_passphrase(secrecy::SecretBox::new(Box::new(pp.as_bytes().to_vec())));
+        }
+        let kp = engine.generate_key_pair(options).unwrap();
+
+        let public_key = String::from_utf8_lossy(&kp.public_key).into_owned();
+        // Replicate the WASM path: secret_key is Vec<u8> (serde_bytes → Uint8Array)
+        // then JS does TextDecoder.decode() which is equivalent to String::from_utf8.
+        let secret_key_bytes = kp.secret_key.expose_secret().clone();
+        let secret_key = String::from_utf8(secret_key_bytes).unwrap();
+        let fingerprint = kp.fingerprint.0.clone();
+
+        (public_key, secret_key, fingerprint)
+    }
+
+    #[test]
+    fn test_keygen_produces_valid_armor() {
+        let (public_key, secret_key, fingerprint) = gen_key("Test", "test@example.com");
+
+        assert!(public_key.contains("BEGIN PGP PUBLIC KEY BLOCK"));
+        assert!(secret_key.contains("BEGIN PGP PRIVATE KEY BLOCK"));
+        assert!(!fingerprint.is_empty());
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let (public_key, secret_key, _) = gen_key("Alice", "alice@example.com");
+        let engine = SequoiaEngine::new();
+
+        let plaintext = "Hello from WASM native test!";
+        let ciphertext = engine
+            .encrypt(plaintext.as_bytes(), &[public_key.into_bytes()])
+            .unwrap();
+        let ciphertext_str = String::from_utf8(ciphertext).unwrap();
+        assert!(ciphertext_str.contains("BEGIN PGP MESSAGE"));
+
+        // Decrypt using the same bytes→string→bytes path as the web app
+        let decrypted = engine
+            .decrypt(ciphertext_str.as_bytes(), secret_key.as_bytes(), None)
+            .unwrap();
+        assert_eq!(decrypted, plaintext.as_bytes());
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_with_passphrase() {
+        let (public_key, secret_key, _) =
+            gen_key_with_passphrase("Bob", "bob@example.com", Some("my-passphrase"));
+        let engine = SequoiaEngine::new();
+
+        let plaintext = "Passphrase-protected";
+        let ciphertext = engine
+            .encrypt(plaintext.as_bytes(), &[public_key.into_bytes()])
+            .unwrap();
+
+        // With correct passphrase
+        let decrypted = engine
+            .decrypt(&ciphertext, secret_key.as_bytes(), Some(b"my-passphrase"))
+            .unwrap();
+        assert_eq!(decrypted, plaintext.as_bytes());
+
+        // Without passphrase should fail
+        let result = engine.decrypt(&ciphertext, secret_key.as_bytes(), None);
+        assert!(result.is_err());
+
+        // Wrong passphrase should fail
+        let result = engine.decrypt(&ciphertext, secret_key.as_bytes(), Some(b"wrong"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sign_verify_roundtrip() {
+        let (public_key, secret_key, _) = gen_key("Signer", "signer@example.com");
+        let engine = SequoiaEngine::new();
+
+        let message = "This message is authentic.";
+        let signed = engine
+            .sign(message.as_bytes(), secret_key.as_bytes(), None)
+            .unwrap();
+        let signed_str = String::from_utf8(signed).unwrap();
+        assert!(signed_str.contains("BEGIN PGP MESSAGE"));
+
+        let result = engine
+            .verify(signed_str.as_bytes(), public_key.as_bytes())
+            .unwrap();
+        assert!(result.valid);
+    }
+
+    #[test]
+    fn test_inspect_key() {
+        let (public_key, _, _) = gen_key("Alice Inspect", "alice@inspect.com");
+        let engine = SequoiaEngine::new();
+
+        let info = engine.inspect_key(public_key.as_bytes()).unwrap();
+        assert!(!info.fingerprint.0.is_empty());
+        assert!(!info.has_secret_key); // public key only
+        assert_eq!(info.user_ids[0].name.as_deref(), Some("Alice Inspect"));
+        assert_eq!(info.user_ids[0].email.as_deref(), Some("alice@inspect.com"));
+    }
+
+    #[test]
+    fn test_inspect_secret_key() {
+        let (_, secret_key, _) = gen_key("Bob Inspect", "bob@inspect.com");
+        let engine = SequoiaEngine::new();
+
+        let info = engine.inspect_key(secret_key.as_bytes()).unwrap();
+        assert!(info.has_secret_key);
+    }
+
+    #[test]
+    fn test_decrypt_wrong_key_fails() {
+        let (pub_alice, _, _) = gen_key("Alice", "alice@example.com");
+        let (_, sec_bob, _) = gen_key("Bob", "bob@example.com");
+        let engine = SequoiaEngine::new();
+
+        let ciphertext = engine
+            .encrypt(b"For Alice only", &[pub_alice.into_bytes()])
+            .unwrap();
+
+        let result = engine.decrypt(&ciphertext, sec_bob.as_bytes(), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_wrong_key_fails() {
+        let (_, sec_alice, _) = gen_key("Alice", "alice@example.com");
+        let (pub_bob, _, _) = gen_key("Bob", "bob@example.com");
+        let engine = SequoiaEngine::new();
+
+        let signed = engine
+            .sign(b"Signed by Alice", sec_alice.as_bytes(), None)
+            .unwrap();
+
+        let result = engine.verify(&signed, pub_bob.as_bytes()).unwrap();
+        assert!(!result.valid);
+    }
+
+    /// Test the exact bytes→string conversion that the web app performs.
+    /// This is the path that broke on Chrome Mac: WASM returns secret_key as
+    /// Vec<u8> (Uint8Array via serde_bytes), JS does TextDecoder.decode(),
+    /// then passes the string back to WASM decrypt.
+    #[test]
+    fn test_secret_key_bytes_to_string_roundtrip() {
+        let engine = SequoiaEngine::new();
+        let kp = engine
+            .generate_key_pair(KeyGenOptions::new(UserId::new("Roundtrip", "rt@test.com")))
+            .unwrap();
+
+        let plaintext = b"Testing the bytes-to-string roundtrip";
+        let ciphertext = engine.encrypt(plaintext, &[kp.public_key.clone()]).unwrap();
+
+        // Simulate the WASM/JS pipeline:
+        // 1. Rust returns secret_key as Vec<u8> (serde_bytes → Uint8Array in JS)
+        let secret_bytes: Vec<u8> = kp.secret_key.expose_secret().clone();
+        // 2. JS does: new TextDecoder().decode(uint8array) → string
+        let secret_string = String::from_utf8(secret_bytes).unwrap();
+        // 3. JS passes string to WASM decrypt, wasm-bindgen converts &str → bytes
+        let decrypted = engine
+            .decrypt(&ciphertext, secret_string.as_bytes(), None)
+            .unwrap();
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    /// Test the JSON recipient parsing used by the WASM encrypt wrapper.
+    #[test]
+    fn test_recipient_keys_json_parsing() {
+        let (pub1, _, _) = gen_key("R1", "r1@test.com");
+        let (pub2, _, _) = gen_key("R2", "r2@test.com");
+
+        let json = serde_json::to_string(&vec![&pub1, &pub2]).unwrap();
+        let parsed: Vec<String> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed[0].contains("BEGIN PGP PUBLIC KEY BLOCK"));
+        assert!(parsed[1].contains("BEGIN PGP PUBLIC KEY BLOCK"));
+    }
+
+    #[test]
+    fn test_full_roundtrip_two_parties() {
+        let (pub_sender, sec_sender, _) = gen_key("Sender", "sender@test.com");
+        let (pub_recipient, sec_recipient, _) = gen_key("Recipient", "recipient@test.com");
+        let engine = SequoiaEngine::new();
+
+        let plaintext = "Confidential message";
+
+        // Encrypt for recipient
+        let ciphertext = engine
+            .encrypt(plaintext.as_bytes(), &[pub_recipient.as_bytes().to_vec()])
+            .unwrap();
+
+        // Recipient decrypts
+        let decrypted = engine
+            .decrypt(&ciphertext, sec_recipient.as_bytes(), None)
+            .unwrap();
+        assert_eq!(decrypted, plaintext.as_bytes());
+
+        // Sender cannot decrypt
+        assert!(
+            engine
+                .decrypt(&ciphertext, sec_sender.as_bytes(), None)
+                .is_err()
+        );
+
+        // Sender signs
+        let signed = engine
+            .sign(plaintext.as_bytes(), sec_sender.as_bytes(), None)
+            .unwrap();
+
+        // Verify with sender's key → valid
+        let v1 = engine.verify(&signed, pub_sender.as_bytes()).unwrap();
+        assert!(v1.valid);
+
+        // Verify with recipient's key → invalid
+        let v2 = engine.verify(&signed, pub_recipient.as_bytes()).unwrap();
+        assert!(!v2.valid);
+    }
+}

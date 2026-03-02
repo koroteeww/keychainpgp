@@ -263,3 +263,140 @@ pub fn run() {
             }
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    /// Extract command names from an `invoke_handler` block in the source text.
+    ///
+    /// Looks for lines like `commands::crypto::encrypt_text,` and returns
+    /// the full path (e.g. "crypto::encrypt_text").
+    fn extract_commands(block: &str) -> HashSet<String> {
+        let mut commands = HashSet::new();
+        for line in block.lines() {
+            let trimmed = line.trim().trim_end_matches(',');
+            if let Some(rest) = trimmed.strip_prefix("commands::") {
+                if !rest.is_empty() && !rest.starts_with("//") {
+                    commands.insert(rest.to_string());
+                }
+            }
+        }
+        commands
+    }
+
+    /// Find the invoke_handler block starting after `needle` in the source.
+    fn find_handler_block(source: &str, needle: &str) -> String {
+        let start = source.find(needle).expect("could not find handler marker");
+        let after = &source[start..];
+        let handler_start = after
+            .find("invoke_handler(")
+            .expect("no invoke_handler after marker");
+        let block_start = &after[handler_start..];
+        // Find the matching `])` that closes the generate_handler![] macro
+        let mut depth = 0;
+        let mut end = 0;
+        for (i, ch) in block_start.char_indices() {
+            if ch == '[' {
+                depth += 1;
+            } else if ch == ']' {
+                depth -= 1;
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        block_start[..end].to_string()
+    }
+
+    /// Verify that desktop and mobile command handlers stay in sync.
+    ///
+    /// This test prevents regressions like issue #27 where a command was
+    /// registered for desktop but missing from mobile, causing a runtime
+    /// "Command not found" error on Android.
+    #[test]
+    fn test_command_registration_sync() {
+        let source = include_str!("lib.rs");
+
+        let desktop_block = find_handler_block(source, "#[cfg(desktop)]");
+        let mobile_block = find_handler_block(source, "#[cfg(mobile)]");
+
+        let desktop_cmds = extract_commands(&desktop_block);
+        let mobile_cmds = extract_commands(&mobile_block);
+
+        assert!(
+            !desktop_cmds.is_empty(),
+            "Failed to parse desktop commands from lib.rs"
+        );
+        assert!(
+            !mobile_cmds.is_empty(),
+            "Failed to parse mobile commands from lib.rs"
+        );
+
+        // Commands that are expected on only one platform
+        let desktop_only: HashSet<&str> = [
+            "crypto::encrypt_clipboard",
+            "crypto::decrypt_clipboard",
+            "crypto::sign_clipboard",
+            "crypto::verify_clipboard",
+            "clipboard::read_clipboard",
+            "clipboard::write_clipboard",
+            "clipboard::clear_clipboard",
+        ]
+        .into();
+
+        let mobile_only: HashSet<&str> = [
+            "clipboard_mobile::read_clipboard",
+            "clipboard_mobile::write_clipboard",
+            "clipboard_mobile::clear_clipboard",
+        ]
+        .into();
+
+        // Verify desktop-only commands are NOT in mobile
+        for cmd in &desktop_only {
+            assert!(
+                desktop_cmds.contains(*cmd),
+                "Desktop-only command {cmd} missing from desktop handler"
+            );
+            assert!(
+                !mobile_cmds.contains(*cmd),
+                "Desktop-only command {cmd} should NOT be in mobile handler"
+            );
+        }
+
+        // Verify mobile-only commands are NOT in desktop
+        for cmd in &mobile_only {
+            assert!(
+                mobile_cmds.contains(*cmd),
+                "Mobile-only command {cmd} missing from mobile handler"
+            );
+            assert!(
+                !desktop_cmds.contains(*cmd),
+                "Mobile-only command {cmd} should NOT be in desktop handler"
+            );
+        }
+
+        // All remaining desktop commands (shared) must also be in mobile
+        let shared_desktop: HashSet<_> = desktop_cmds
+            .iter()
+            .filter(|c| !desktop_only.contains(c.as_str()))
+            .collect();
+        let shared_mobile: HashSet<_> = mobile_cmds
+            .iter()
+            .filter(|c| !mobile_only.contains(c.as_str()))
+            .collect();
+
+        let missing_from_mobile: Vec<_> = shared_desktop.difference(&shared_mobile).collect();
+        let missing_from_desktop: Vec<_> = shared_mobile.difference(&shared_desktop).collect();
+
+        assert!(
+            missing_from_mobile.is_empty(),
+            "Commands registered on desktop but missing from mobile (issue #27 regression): {missing_from_mobile:?}"
+        );
+        assert!(
+            missing_from_desktop.is_empty(),
+            "Commands registered on mobile but missing from desktop: {missing_from_desktop:?}"
+        );
+    }
+}

@@ -39,6 +39,9 @@ reqwest.workspace = true
 keychainpgp-clipboard.workspace = true
 tauri-plugin-global-shortcut = "2"
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
