@@ -152,6 +152,10 @@ cargo build --release -p keychainpgp-cli
 ### Development
 
 ```bash
+# Install git hooks (pre-commit: fmt + clippy, pre-push: tests)
+./scripts/install-hooks.sh      # Linux / macOS / Git Bash
+.\scripts\install-hooks.ps1     # PowerShell
+
 # Run the desktop app in dev mode (hot-reload)
 cd crates/keychainpgp-ui && cargo tauri dev
 
@@ -188,11 +192,12 @@ Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md)
 **TL;DR:**
 
 1. Fork & clone
-2. `git checkout -b feature/your-feature`
-3. Make changes, add tests
-4. `cargo test --workspace && cargo clippy --workspace -- -D warnings`
-5. Commit with [Conventional Commits](https://www.conventionalcommits.org/) format
-6. Open a pull request
+2. `./scripts/install-hooks.sh` to set up git hooks
+3. `git checkout -b feature/your-feature`
+4. Make changes, add tests
+5. `cargo test --workspace && cargo clippy --workspace -- -D warnings`
+6. Commit with [Conventional Commits](https://www.conventionalcommits.org/) format
+7. Open a pull request
 
 This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
 
