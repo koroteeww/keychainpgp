@@ -2677,6 +2677,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-os",
  "tauri-plugin-store",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
