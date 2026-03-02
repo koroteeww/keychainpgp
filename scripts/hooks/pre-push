@@ -1,0 +1,11 @@
+#!/bin/sh
+# Pre-push hook: run Rust tests before pushing to remote.
+# UI tests are covered by CI + branch protection rules.
+
+export PATH="$HOME/.cargo/bin:$PATH"
+set -e
+
+echo "==> Running cargo test (workspace, excluding UI)..."
+cargo test --workspace --exclude keychainpgp-ui
+
+echo "==> All pre-push checks passed."
