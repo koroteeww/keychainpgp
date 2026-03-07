@@ -254,6 +254,10 @@ export async function importKeyBundle(encryptedData: string, passphrase: string)
   return invoke("import_key_bundle", { encryptedData, passphrase });
 }
 
+export async function saveSyncFile(path: string, data: string): Promise<void> {
+  return invoke("save_sync_file", { path, data });
+}
+
 // --- OPSEC ---
 
 export async function enableOpsecMode(title?: string): Promise<void> {

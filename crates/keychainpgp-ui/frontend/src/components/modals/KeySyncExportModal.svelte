@@ -1,7 +1,8 @@
 <script lang="ts">
   import ModalContainer from "./ModalContainer.svelte";
   import { appStore } from "$lib/stores/app.svelte";
-  import { exportKeyBundle, type SyncBundle } from "$lib/tauri";
+  import { exportKeyBundle, saveSyncFile, type SyncBundle } from "$lib/tauri";
+  import { save } from "@tauri-apps/plugin-dialog";
   import { Copy, Download, Pause, Play, ChevronLeft, ChevronRight } from "lucide-svelte";
   import * as m from "$lib/paraglide/messages.js";
 
@@ -89,15 +90,18 @@
     }
   }
 
-  function downloadFile() {
+  async function downloadFile() {
     if (!bundle) return;
-    const blob = new Blob([bundle.file_data], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "keychainpgp-sync.enc";
-    a.click();
-    URL.revokeObjectURL(url);
+    const filePath = await save({
+      defaultPath: "keychainpgp-sync.enc",
+      filters: [{ name: "Encrypted bundle", extensions: ["enc"] }],
+    });
+    if (!filePath) return;
+    try {
+      await saveSyncFile(filePath, bundle.file_data);
+    } catch (e) {
+      error = String(e);
+    }
   }
 </script>
 

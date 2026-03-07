@@ -75,6 +75,7 @@ fn create_builder() -> tauri::Builder<tauri::Wry> {
             // Shared sync commands
             commands::sync::export_key_bundle,
             commands::sync::import_key_bundle,
+            commands::sync::save_sync_file,
             // OPSEC commands
             commands::opsec::enable_opsec_mode,
             commands::opsec::disable_opsec_mode,
@@ -124,6 +125,7 @@ fn create_builder() -> tauri::Builder<tauri::Wry> {
             // Shared sync commands
             commands::sync::export_key_bundle,
             commands::sync::import_key_bundle,
+            commands::sync::save_sync_file,
             // Clipboard commands (via tauri-plugin-clipboard-manager)
             commands::clipboard_mobile::read_clipboard,
             commands::clipboard_mobile::write_clipboard,

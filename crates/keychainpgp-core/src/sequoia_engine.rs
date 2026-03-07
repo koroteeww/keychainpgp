@@ -746,9 +746,20 @@ impl CryptoEngine for SequoiaEngine {
     }
 
     fn inspect_key(&self, key_data: &[u8]) -> Result<CertInfo> {
-        let cert = Cert::from_bytes(key_data).map_err(|e| Error::InvalidArmor {
-            reason: e.to_string(),
-        })?;
+        use sequoia_openpgp::cert::CertParser;
+
+        // Use CertParser to handle both single certs and keyrings
+        let cert = CertParser::from_bytes(key_data)
+            .map_err(|e| Error::InvalidArmor {
+                reason: e.to_string(),
+            })?
+            .next()
+            .ok_or_else(|| Error::InvalidArmor {
+                reason: "no certificate found".into(),
+            })?
+            .map_err(|e| Error::InvalidArmor {
+                reason: e.to_string(),
+            })?;
 
         let fingerprint = Fingerprint::new(cert.fingerprint().to_hex());
 

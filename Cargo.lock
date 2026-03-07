@@ -2644,6 +2644,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "directories",
+ "flate2",
  "keychainpgp-core",
  "keyring",
  "reqwest 0.12.28",

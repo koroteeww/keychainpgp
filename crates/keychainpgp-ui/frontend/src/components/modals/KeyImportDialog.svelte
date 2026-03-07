@@ -1,6 +1,6 @@
 <script lang="ts">
   import ModalContainer from "./ModalContainer.svelte";
-  import { importKey, importBackup } from "$lib/tauri";
+  import { importKey, importBackup, importKeyBundle } from "$lib/tauri";
   import { keyStore } from "$lib/stores/keys.svelte";
   import { appStore } from "$lib/stores/app.svelte";
   import { isMobile } from "$lib/platform";
@@ -16,9 +16,20 @@
   let importing = $state(false);
   let error = $state("");
   let transferCode = $state("");
+  let syncPassphrase = $state("");
 
   // Detect OpenKeychain backup format
   const isBackup = $derived(keyData.includes("Passphrase-Format: numeric9x4"));
+
+  // Detect KeychainPGP sync bundle (base64-encoded encrypted data, no PGP headers)
+  const isSyncBundle = $derived.by(() => {
+    if (isBackup) return false;
+    const trimmed = keyData.trim();
+    if (!trimmed || trimmed.length < 100) return false;
+    // Not a PGP block, and looks like pure base64
+    if (trimmed.startsWith("-----BEGIN PGP")) return false;
+    return /^[A-Za-z0-9+/=\s]+$/.test(trimmed);
+  });
 
   // Extract Passphrase-Begin hint
   const passphraseBegin = $derived.by(() => {
@@ -32,7 +43,26 @@
       return;
     }
 
-    if (isBackup) {
+    if (isSyncBundle) {
+      if (!syncPassphrase.trim()) {
+        error = m.import_sync_passphrase_error();
+        return;
+      }
+      error = "";
+      importing = true;
+      try {
+        const count = await importKeyBundle(keyData.trim(), syncPassphrase.trim());
+        await keyStore.refresh();
+        appStore.setStatus(
+          count === 1 ? m.sync_success_count_one() : m.sync_success_count_other({ count }),
+        );
+        appStore.closeModal();
+      } catch (e) {
+        error = String(e);
+      } finally {
+        importing = false;
+      }
+    } else if (isBackup) {
       if (!transferCode.trim()) {
         error = m.import_backup_transfer_error();
         return;
@@ -152,13 +182,30 @@
       {m.import_choose_file()}
       <input
         type="file"
-        accept=".asc,.gpg,.pgp,.pub,.key,.sec.pgp"
+        accept=".asc,.gpg,.pgp,.pub,.key,.sec.pgp,.enc"
         class="hidden"
         onchange={handleFileInput}
       />
     </label>
 
-    {#if isBackup}
+    {#if isSyncBundle}
+      <div
+        class="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3"
+      >
+        <p class="text-sm font-medium">{m.import_sync_detected()}</p>
+        <p class="text-xs text-[var(--color-text-secondary)]">
+          {m.import_sync_desc()}
+        </p>
+        <input
+          type="text"
+          placeholder={m.import_sync_placeholder()}
+          bind:value={syncPassphrase}
+          class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5
+                 text-center font-mono text-sm tracking-wider
+                 focus:ring-2 focus:ring-[var(--color-primary)] focus:outline-none"
+        />
+      </div>
+    {:else if isBackup}
       <div
         class="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3"
       >
@@ -196,9 +243,18 @@
         class="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white
                transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
         onclick={handleImport}
-        disabled={!keyData.trim() || (isBackup && !transferCode.trim()) || importing}
+        disabled={!keyData.trim() ||
+          (isBackup && !transferCode.trim()) ||
+          (isSyncBundle && !syncPassphrase.trim()) ||
+          importing}
       >
-        {importing ? m.import_loading() : isBackup ? m.import_submit_backup() : m.import_submit()}
+        {importing
+          ? m.import_loading()
+          : isSyncBundle
+            ? m.import_submit_sync()
+            : isBackup
+              ? m.import_submit_backup()
+              : m.import_submit()}
       </button>
     </div>
   </div>

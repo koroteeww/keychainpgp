@@ -3,6 +3,8 @@
 //! Exports and imports encrypted key bundles containing both public and secret
 //! keys, suitable for transfer via QR code sequences or file sharing.
 
+use std::io::{Read, Write};
+
 use serde::{Deserialize, Serialize};
 
 /// A bundle containing all keys for sync.
@@ -37,11 +39,9 @@ impl Drop for KeyBundleEntry {
 
 /// Maximum bytes per QR code part.
 ///
-/// Lower values produce simpler (lower-version) QR codes that phone cameras
-/// can scan reliably from a screen.  500 bytes + the `KCPGP:N/M:` header
-/// lands around QR version 10–15 at ECC-L, which is quick to detect even
-/// when the codes rotate rapidly.
-const QR_PART_SIZE: usize = 500;
+/// 1000 bytes + the `KCPGP:N/M:` header lands around QR version 18–22
+/// at ECC-L, which modern phone cameras handle reliably.
+const QR_PART_SIZE: usize = 1000;
 
 /// Prefix for multi-part QR codes.
 const QR_PREFIX: &str = "KCPGP";
@@ -152,6 +152,40 @@ pub fn generate_sync_passphrase() -> String {
     }
 
     out
+}
+
+/// Compress data with deflate for smaller bundles.
+pub fn compress(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder
+        .write_all(data)
+        .map_err(|e| format!("compression failed: {e}"))?;
+    encoder
+        .finish()
+        .map_err(|e| format!("compression failed: {e}"))
+}
+
+/// Decompress deflate-compressed data.
+pub fn decompress(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut decoder = flate2::read::DeflateDecoder::new(data);
+    let mut buf = Vec::new();
+    decoder
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("decompression failed: {e}"))?;
+    Ok(buf)
+}
+
+/// Decompress if compressed, otherwise return as-is.
+///
+/// Detects compressed data by checking if the first byte is `{` (raw JSON).
+pub fn decompress_or_raw(data: &[u8]) -> Result<Vec<u8>, String> {
+    if data.first() == Some(&b'{') {
+        // Raw JSON (v1 uncompressed format)
+        Ok(data.to_vec())
+    } else {
+        // Compressed (v2 format)
+        decompress(data)
+    }
 }
 
 /// Encode bytes to base64 (URL-safe, no padding).
@@ -291,5 +325,81 @@ mod tests {
         // Only provide first part
         let result = reassemble_from_qr(&parts[..1]);
         assert!(result.is_err(), "should error on incomplete scan");
+    }
+
+    #[test]
+    fn test_compress_decompress_round_trip() {
+        let data = b"Hello, KeychainPGP! This is a test of compression.";
+        let compressed = compress(data).unwrap();
+        let decompressed = decompress(&compressed).unwrap();
+        assert_eq!(data.as_slice(), decompressed.as_slice());
+    }
+
+    #[test]
+    fn test_compress_reduces_size() {
+        // JSON-like data with repeated patterns should compress well
+        let data = r#"{"keys":[{"fingerprint":"AABB","public_key":[1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,7,8,9,0]}]}"#;
+        let repeated: String = std::iter::repeat_n(data, 50).collect::<Vec<_>>().join(",");
+        let compressed = compress(repeated.as_bytes()).unwrap();
+        assert!(
+            compressed.len() < repeated.len() / 2,
+            "compressed ({}) should be much smaller than original ({})",
+            compressed.len(),
+            repeated.len()
+        );
+    }
+
+    #[test]
+    fn test_decompress_or_raw_json() {
+        // Raw JSON (starts with '{') should pass through
+        let json = b"{\"version\":1,\"keys\":[]}";
+        let result = decompress_or_raw(json).unwrap();
+        assert_eq!(json.as_slice(), result.as_slice());
+    }
+
+    #[test]
+    fn test_decompress_or_raw_compressed() {
+        let json = b"{\"version\":1,\"keys\":[]}";
+        let compressed = compress(json).unwrap();
+        assert_ne!(
+            compressed[0], b'{',
+            "compressed data should not start with open brace"
+        );
+        let result = decompress_or_raw(&compressed).unwrap();
+        assert_eq!(json.as_slice(), result.as_slice());
+    }
+
+    #[test]
+    fn test_bundle_serialize_compress_round_trip() {
+        let bundle = KeyBundle {
+            version: 1,
+            keys: vec![
+                KeyBundleEntry {
+                    fingerprint: "AABBCCDD".into(),
+                    public_key: vec![0x99, 0x01, 0x02, 0x03],
+                    secret_key: Some(vec![0x95, 0x04, 0x05, 0x06]),
+                    trust_level: 2,
+                },
+                KeyBundleEntry {
+                    fingerprint: "EEFF0011".into(),
+                    public_key: vec![0x99, 0x07, 0x08, 0x09],
+                    secret_key: None,
+                    trust_level: 1,
+                },
+            ],
+        };
+
+        // Serialize → compress → decompress → deserialize
+        let json = serde_json::to_vec(&bundle).unwrap();
+        let compressed = compress(&json).unwrap();
+        let decompressed = decompress_or_raw(&compressed).unwrap();
+        let restored: KeyBundle = serde_json::from_slice(&decompressed).unwrap();
+
+        assert_eq!(restored.version, 1);
+        assert_eq!(restored.keys.len(), 2);
+        assert_eq!(restored.keys[0].fingerprint, "AABBCCDD");
+        assert_eq!(restored.keys[1].fingerprint, "EEFF0011");
+        assert!(restored.keys[0].secret_key.is_some());
+        assert!(restored.keys[1].secret_key.is_none());
     }
 }
