@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
 
 use keychainpgp_core::CryptoEngine;
@@ -75,8 +75,7 @@ impl From<KeyRecord> for KeyInfo {
 
 /// Generate a new key pair and store it in the keyring.
 #[tauri::command]
-pub async fn generate_key_pair(
-    app: AppHandle,
+pub fn generate_key_pair(
     state: State<'_, AppState>,
     name: String,
     email: String,
@@ -150,49 +149,6 @@ pub async fn generate_key_pair(
             keyring.store_revocation_cert(&record.fingerprint, &key_pair.revocation_cert)
         {
             tracing::warn!("failed to store revocation certificate: {e}");
-        }
-    }
-
-    // Automatic Keyserver Upload
-    let settings = super::settings::get_settings(app.clone(), state.clone());
-    if settings.upload_to_keyservers && !state.opsec_mode.load(Ordering::SeqCst) {
-        let fingerprint = record.fingerprint.clone();
-        let urls: Vec<String> = settings
-            .keyserver_url
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        if !urls.is_empty() {
-            let app_handle = app.clone();
-            tauri::async_runtime::spawn(async move {
-                let state_handle = app_handle.state::<AppState>();
-                for url in urls {
-                    tracing::info!("automatically uploading key {} to {}", fingerprint, url);
-                    let result = keyserver_upload(
-                        app_handle.clone(),
-                        state_handle.clone(),
-                        fingerprint.clone(),
-                        Some(url.clone()),
-                    )
-                    .await;
-                    match result {
-                        Ok(_) => {
-                            tracing::info!("automatic upload to {} successful", url);
-                            let _ = app_handle.emit(
-                                "auto-upload-result",
-                                format!("Key uploaded successfully to {url}"),
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!("automatic upload to {} failed: {}", url, e);
-                            let _ = app_handle
-                                .emit("auto-upload-result", format!("Upload failed to {url}: {e}"));
-                        }
-                    }
-                }
-            });
         }
     }
 

@@ -1,13 +1,6 @@
 <script lang="ts">
   import { settingsStore } from "$lib/stores/settings.svelte";
-  import {
-    keyserverUpload,
-    clearPassphraseCache,
-    enableOpsecMode,
-    disableOpsecMode,
-    testProxyConnection,
-    isPortable as checkPortable,
-  } from "$lib/tauri";
+  import { clearPassphraseCache, enableOpsecMode, disableOpsecMode, testProxyConnection, isPortable as checkPortable } from "$lib/tauri";
   import { appStore } from "$lib/stores/app.svelte";
   import { keyStore } from "$lib/stores/keys.svelte";
   import { shortFingerprint } from "$lib/utils";
@@ -19,11 +12,7 @@
   const desktop = isDesktop();
   let portable = $state(false);
   if (desktop) {
-    checkPortable()
-      .then((v) => {
-        portable = v;
-      })
-      .catch(() => {});
+    checkPortable().then(v => { portable = v; }).catch(() => {});
   }
 
   let proxyTesting = $state(false);
@@ -57,22 +46,23 @@
   function toggleSelfKey(fp: string) {
     let current = settingsStore.settings.encrypt_to_self_keys;
     if (current.length === 0) {
-      current = keyStore.ownKeys.map((k) => k.fingerprint);
+      current = keyStore.ownKeys.map(k => k.fingerprint);
     }
+<<<<<<< HEAD
     const next = current.includes(fp) ? current.filter((k) => k !== fp) : [...current, fp];
     const allOwn = keyStore.ownKeys.map((k) => k.fingerprint);
     const isAll = allOwn.length > 0 && allOwn.every((f) => next.includes(f));
+=======
+    const next = current.includes(fp)
+      ? current.filter(k => k !== fp)
+      : [...current, fp];
+    const allOwn = keyStore.ownKeys.map(k => k.fingerprint);
+    const isAll = allOwn.length > 0 && allOwn.every(f => next.includes(f));
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
     settingsStore.save({ encrypt_to_self_keys: isAll ? [] : next });
   }
 
-  function toggle(
-    key:
-      | "auto_clear_enabled"
-      | "clipboard_monitoring"
-      | "encrypt_to_self"
-      | "auto_clear_after_encrypt"
-      | "include_armor_headers",
-  ) {
+  function toggle(key: "auto_clear_enabled" | "clipboard_monitoring" | "encrypt_to_self" | "auto_clear_after_encrypt" | "include_armor_headers") {
     settingsStore.save({ [key]: !settingsStore.settings[key] });
   }
 
@@ -135,9 +125,7 @@
   };
 
   function toggleProxy() {
-    settingsStore.save({
-      proxy_enabled: !settingsStore.settings.proxy_enabled,
-    });
+    settingsStore.save({ proxy_enabled: !settingsStore.settings.proxy_enabled });
     proxyTestResult = null;
   }
 
@@ -175,61 +163,6 @@
     }
   }
 
-  async function handleUploadToggle() {
-    const wasEnabled = settingsStore.settings.upload_to_keyservers;
-    const isNowEnabled = !wasEnabled;
-
-    await settingsStore.save({ upload_to_keyservers: isNowEnabled });
-
-    if (isNowEnabled && keyStore.ownKeys.length > 0) {
-      appStore.openModal("confirm", {
-        title: m.settings_upload_existing_title(),
-        message: m.settings_upload_existing_message(),
-        confirmLabel: m.confirm_yes(),
-        cancelLabel: m.confirm_no(),
-        onConfirm: async () => {
-          appStore.closeModal();
-          const urls = settingsStore.settings.keyserver_url
-            .split(",")
-            .map((u: string) => u.trim())
-            .filter((u: string) => u.length > 0);
-
-          if (urls.length === 0) return;
-
-          appStore.setStatus(m.loading());
-          let successCount = 0;
-          let failCount = 0;
-
-          for (const key of keyStore.ownKeys) {
-            for (const url of urls) {
-              try {
-                await keyserverUpload(key.fingerprint, url);
-                successCount++;
-              } catch (e) {
-                console.error(
-                  `Failed to upload ${key.fingerprint} to ${url}:`,
-                  e,
-                );
-                failCount++;
-              }
-            }
-          }
-
-          if (failCount === 0) {
-            appStore.setStatus(m.settings_upload_success_all());
-          } else {
-            appStore.setStatus(
-              m.settings_upload_status({
-                success: successCount,
-                failed: failCount,
-              }),
-            );
-          }
-        },
-      });
-    }
-  }
-
   const themeLabels: Record<string, () => string> = {
     system: () => m.settings_theme_system(),
     light: () => m.settings_theme_light(),
@@ -242,6 +175,7 @@
 
   <!-- Theme -->
   <section class="space-y-3">
+<<<<<<< HEAD
     <h3 class="text-sm font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">
       {m.settings_appearance()}
     </h3>
@@ -249,6 +183,13 @@
       {#each ["system", "light", "dark"] as theme}
         <button
           class="rounded-lg border px-4 py-2 text-sm transition-colors"
+=======
+    <h3 class="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">{m.settings_appearance()}</h3>
+    <div class="flex gap-2">
+      {#each ["system", "light", "dark"] as theme}
+        <button
+          class="px-4 py-2 text-sm rounded-lg border transition-colors"
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
           class:bg-[var(--color-primary)]={settingsStore.settings.theme === theme}
           class:text-white={settingsStore.settings.theme === theme}
           class:border-[var(--color-primary)]={settingsStore.settings.theme === theme}
@@ -261,15 +202,18 @@
     </div>
 
     {#if desktop}
+<<<<<<< HEAD
       <label
         class="flex items-center justify-between rounded-lg border border-[var(--color-border)] p-3"
       >
+=======
+      <label class="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border)]">
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
         <div>
           <p class="text-sm font-medium">{m.settings_close_to_tray_label()}</p>
-          <p class="text-xs text-[var(--color-text-secondary)]">
-            {m.settings_close_to_tray_desc()}
-          </p>
+          <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_close_to_tray_desc()}</p>
         </div>
+<<<<<<< HEAD
         <input
           type="checkbox"
           checked={settingsStore.settings.close_to_tray}
@@ -277,12 +221,17 @@
             settingsStore.save({ close_to_tray: !settingsStore.settings.close_to_tray })}
           class="h-4 w-4 accent-[var(--color-primary)]"
         />
+=======
+        <input type="checkbox" checked={settingsStore.settings.close_to_tray} onchange={() => settingsStore.save({ close_to_tray: !settingsStore.settings.close_to_tray })}
+          class="w-4 h-4 accent-[var(--color-primary)]" />
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
       </label>
     {/if}
   </section>
 
   <!-- Language -->
   <section class="space-y-3">
+<<<<<<< HEAD
     <h3 class="text-sm font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">
       {m.settings_language()}
     </h3>
@@ -290,11 +239,14 @@
     <label
       class="flex items-center justify-between rounded-lg border border-[var(--color-border)] p-3"
     >
+=======
+    <h3 class="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">{m.settings_language()}</h3>
+
+    <label class="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border)]">
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
       <div>
         <p class="text-sm font-medium">{m.settings_language_label()}</p>
-        <p class="text-xs text-[var(--color-text-secondary)]">
-          {m.settings_language_desc()}
-        </p>
+        <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_language_desc()}</p>
       </div>
       <select
         value={settingsStore.settings.locale}
@@ -312,6 +264,7 @@
 
   <!-- Clipboard (desktop only) -->
   {#if desktop}
+<<<<<<< HEAD
     <section class="space-y-3">
       <h3 class="text-sm font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">
         {m.settings_clipboard()}
@@ -320,13 +273,28 @@
       <label
         class="flex items-center justify-between rounded-lg border border-[var(--color-border)] p-3"
       >
+=======
+  <section class="space-y-3">
+    <h3 class="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">{m.settings_clipboard()}</h3>
+
+    <label class="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border)]">
+      <div>
+        <p class="text-sm font-medium">{m.settings_auto_clear_label()}</p>
+        <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_auto_clear_desc()}</p>
+      </div>
+      <input type="checkbox" checked={settingsStore.settings.auto_clear_enabled} onchange={() => toggle("auto_clear_enabled")}
+        class="w-4 h-4 accent-[var(--color-primary)]" />
+    </label>
+
+    {#if settingsStore.settings.auto_clear_enabled}
+      <label class="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border)]">
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
         <div>
-          <p class="text-sm font-medium">{m.settings_auto_clear_label()}</p>
-          <p class="text-xs text-[var(--color-text-secondary)]">
-            {m.settings_auto_clear_desc()}
-          </p>
+          <p class="text-sm font-medium">{m.settings_auto_clear_delay_label()}</p>
+          <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_auto_clear_delay_desc()}</p>
         </div>
         <input
+<<<<<<< HEAD
           type="checkbox"
           checked={settingsStore.settings.auto_clear_enabled}
           onchange={() => toggle("auto_clear_enabled")}
@@ -357,10 +325,24 @@
         </label>
       {/if}
     </section>
+=======
+          type="number"
+          min="5"
+          max="300"
+          value={settingsStore.settings.auto_clear_delay_secs}
+          onchange={(e) => settingsStore.save({ auto_clear_delay_secs: parseInt(e.currentTarget.value) || 30 })}
+          class="w-20 px-2 py-1 text-sm rounded border border-[var(--color-border)] bg-[var(--color-bg)]
+                 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+        />
+      </label>
+    {/if}
+  </section>
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
   {/if}
 
   <!-- Encryption -->
   <section class="space-y-3">
+<<<<<<< HEAD
     <h3 class="text-sm font-semibold tracking-wide text-[var(--color-text-secondary)] uppercase">
       {m.settings_encryption()}
     </h3>
@@ -368,18 +350,26 @@
     <label
       class="flex items-center justify-between rounded-lg border border-[var(--color-border)] p-3"
     >
+=======
+    <h3 class="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">{m.settings_encryption()}</h3>
+
+    <label class="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border)]">
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
       <div>
         <p class="text-sm font-medium">{m.settings_encrypt_to_self_label()}</p>
-        <p class="text-xs text-[var(--color-text-secondary)]">
-          {m.settings_encrypt_to_self_desc()}
-        </p>
+        <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_encrypt_to_self_desc()}</p>
       </div>
+<<<<<<< HEAD
       <input
         type="checkbox"
         checked={settingsStore.settings.encrypt_to_self}
         onchange={() => toggle("encrypt_to_self")}
         class="h-4 w-4 accent-[var(--color-primary)]"
       />
+=======
+      <input type="checkbox" checked={settingsStore.settings.encrypt_to_self} onchange={() => toggle("encrypt_to_self")}
+        class="w-4 h-4 accent-[var(--color-primary)]" />
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
     </label>
 
     {#if settingsStore.settings.encrypt_to_self && keyStore.ownKeys.length > 0}
@@ -390,13 +380,12 @@
           {:else if settingsStore.settings.encrypt_to_self_keys.length === 1}
             {m.settings_self_keys_count_one()}
           {:else}
-            {m.settings_self_keys_count_other({
-              count: settingsStore.settings.encrypt_to_self_keys.length,
-            })}
+            {m.settings_self_keys_count_other({ count: settingsStore.settings.encrypt_to_self_keys.length })}
           {/if}
         </p>
         <div class="space-y-1">
           {#each keyStore.ownKeys as k (k.fingerprint)}
+<<<<<<< HEAD
             <label
               class="flex cursor-pointer items-center gap-2 rounded p-2 hover:bg-[var(--color-bg-secondary)]"
             >
@@ -404,6 +393,12 @@
                 type="checkbox"
                 checked={settingsStore.settings.encrypt_to_self_keys.length === 0 ||
                   settingsStore.settings.encrypt_to_self_keys.includes(k.fingerprint)}
+=======
+            <label class="flex items-center gap-2 p-2 rounded hover:bg-[var(--color-bg-secondary)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settingsStore.settings.encrypt_to_self_keys.length === 0 || settingsStore.settings.encrypt_to_self_keys.includes(k.fingerprint)}
+>>>>>>> fb12d5f (revert: remove automatic keyserver upload)
                 onchange={() => toggleSelfKey(k.fingerprint)}
                 class="h-3.5 w-3.5 accent-[var(--color-primary)]"
               />
@@ -424,9 +419,7 @@
     >
       <div>
         <p class="text-sm font-medium">{m.settings_include_armor_label()}</p>
-        <p class="text-xs text-[var(--color-text-secondary)]">
-          {m.settings_include_armor_desc()}
-        </p>
+        <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_include_armor_desc()}</p>
       </div>
       <input
         type="checkbox"
@@ -448,9 +441,7 @@
     >
       <div>
         <p class="text-sm font-medium">{m.settings_passphrase_cache_label()}</p>
-        <p class="text-xs text-[var(--color-text-secondary)]">
-          {m.settings_passphrase_cache_desc()}
-        </p>
+        <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_passphrase_cache_desc()}</p>
       </div>
       <input
         type="number"
@@ -487,10 +478,8 @@
         class="flex items-center justify-between rounded-lg border border-[var(--color-border)] p-3"
       >
         <div>
-          <p class="text-sm font-medium">{m.settings_opsec_enable()}</p>
-          <p class="text-xs text-[var(--color-text-secondary)]">
-            {m.settings_opsec_enable_desc()}
-          </p>
+          <p class="text-sm font-medium">{m.settings_opsec_title_label()}</p>
+          <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_opsec_title_desc()}</p>
         </div>
         <input
           type="checkbox"
@@ -547,6 +536,7 @@
         </label>
       {/if}
     </section>
+
   {/if}
 
   <!-- Key Discovery -->
@@ -583,9 +573,7 @@
           <Globe size={14} />
           {m.settings_proxy()}
         </p>
-        <p class="text-xs text-[var(--color-text-secondary)]">
-          {m.settings_proxy_desc()}
-        </p>
+        <p class="text-xs text-[var(--color-text-secondary)]">{m.settings_proxy_desc()}</p>
       </div>
       <input
         type="checkbox"
@@ -607,11 +595,7 @@
               class:border-[var(--color-border)]={settingsStore.settings.proxy_preset !== preset}
               onclick={() => selectProxyPreset(preset)}
             >
-              {preset === "tor"
-                ? "Tor"
-                : preset === "lokinet"
-                  ? "Lokinet"
-                  : m.settings_proxy_custom()}
+              {preset === "tor" ? "Tor" : preset === "lokinet" ? "Lokinet" : m.settings_proxy_custom()}
             </button>
           {/each}
         </div>
@@ -639,16 +623,11 @@
             onclick={handleProxyTest}
             disabled={proxyTesting}
           >
-            {proxyTesting
-              ? m.settings_proxy_testing()
-              : m.settings_proxy_test()}
+            {proxyTesting ? m.settings_proxy_testing() : m.settings_proxy_test()}
           </button>
           {#if proxyTestResult}
-            <p
-              class="text-xs"
-              class:text-green-600={proxyTestSuccess}
-              class:text-red-600={!proxyTestSuccess}
-            >
+            <p class="text-xs" class:text-green-600={proxyTestSuccess}
+               class:text-red-600={!proxyTestSuccess}>
               {proxyTestResult}
             </p>
           {/if}
