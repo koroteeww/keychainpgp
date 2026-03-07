@@ -13,6 +13,7 @@
   <a href="https://github.com/keychainpgp/keychainpgp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/keychainpgp/keychainpgp/ci.yml?branch=master&style=flat-square&logo=github&label=CI" alt="CI"></a>
   <a href="https://github.com/keychainpgp/keychainpgp/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/keychainpgp/keychainpgp/release.yml?style=flat-square&logo=github&label=Release" alt="Release"></a>
   <a href="https://github.com/keychainpgp/keychainpgp/releases/latest"><img src="https://img.shields.io/github/v/release/keychainpgp/keychainpgp?style=flat-square&color=blue" alt="Latest Release"></a>
+  <a href="https://github.com/keychainpgp/keychainpgp/releases"><img src="https://img.shields.io/github/downloads/keychainpgp/keychainpgp/total?style=flat-square&color=green" alt="Downloads"></a>
   <a href="https://github.com/keychainpgp/keychainpgp/blob/master/LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License"></a>
 </p>
 
