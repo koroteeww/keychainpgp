@@ -8,6 +8,7 @@
   import { onMount } from "svelte";
   import { startContinuousScan, cancelScan } from "$lib/qr-scan";
   import * as m from "$lib/paraglide/messages.js";
+  import ScanProgressBar from "./ScanProgressBar.svelte";
 
   interface Props {
     /** Called with each scanned QR content. Return true to stop scanning. */
@@ -16,8 +17,10 @@
     oncancel: () => void;
     /** Optional progress text, e.g. "2 / 5" */
     progress?: string;
+    /** Optional segmented progress data for visual bar. */
+    segments?: { total: number; scanned: Set<number>; recovered: Set<number> };
   }
-  let { onscan, oncancel, progress }: Props = $props();
+  let { onscan, oncancel, progress, segments }: Props = $props();
 
   let videoEl: HTMLVideoElement | undefined = $state();
   let videoReady = $state(false);
@@ -69,14 +72,29 @@
   <div
     class="pointer-events-none relative z-10 flex h-full flex-col items-center justify-between py-16"
   >
-    <!-- Top: progress / error -->
-    <div class="pointer-events-auto">
+    <!-- Top: progress -->
+    <div class="pointer-events-auto w-full px-8">
       {#if error}
-        <div class="rounded-full bg-red-600/90 px-4 py-2 text-sm font-medium text-white">
+        <div
+          class="mx-auto w-fit rounded-full bg-red-600/90 px-4 py-2 text-sm font-medium text-white"
+        >
           {error}
         </div>
+      {:else if segments && segments.total > 0}
+        <div class="mx-auto max-w-xs space-y-1 rounded-xl bg-black/80 px-4 py-3">
+          <ScanProgressBar
+            total={segments.total}
+            scanned={segments.scanned}
+            recovered={segments.recovered}
+          />
+          {#if progress}
+            <p class="text-center text-xs font-medium text-white/80">{progress}</p>
+          {/if}
+        </div>
       {:else if progress}
-        <div class="rounded-full bg-black/80 px-4 py-2 text-sm font-medium text-white">
+        <div
+          class="mx-auto w-fit rounded-full bg-black/80 px-4 py-2 text-sm font-medium text-white"
+        >
           {progress}
         </div>
       {/if}

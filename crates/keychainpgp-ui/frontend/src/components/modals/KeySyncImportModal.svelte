@@ -13,6 +13,7 @@
   import { isMobile } from "$lib/platform";
   import { Upload, Camera } from "lucide-svelte";
   import QrScanOverlay from "../shared/QrScanOverlay.svelte";
+  import ScanProgressBar from "../shared/ScanProgressBar.svelte";
   import * as m from "$lib/paraglide/messages.js";
 
   const mobile = isMobile();
@@ -30,6 +31,10 @@
   let totalParts = $state(0);
   let passphraseFromQr = $state(false);
 
+  // Track which parts were scanned directly vs recovered via fountain
+  let directScanned = $state<Set<number>>(new Set());
+  let fountainRecovered = $state<Set<number>>(new Set());
+
   async function handleFileLoad(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
@@ -45,6 +50,23 @@
     return true;
   }
 
+  function tryFountainAndCheck(): boolean {
+    if (scannedFountain.length === 0 || scannedParts.size >= totalParts) return false;
+    const beforeSize = scannedParts.size;
+    const recovered = fountainRecover(scannedParts, scannedFountain, totalParts);
+    // Track newly recovered parts
+    if (scannedParts.size > beforeSize) {
+      for (const key of scannedParts.keys()) {
+        if (!directScanned.has(key) && !fountainRecovered.has(key)) {
+          fountainRecovered = new Set([...fountainRecovered, key]);
+        }
+      }
+      scannedParts = new Map(scannedParts);
+    }
+    if (recovered) return reassembleAndFinish();
+    return false;
+  }
+
   function handleScanResult(content: string): boolean {
     // Auto-detect passphrase QR
     if (content.startsWith("KCPGP-PASS:")) {
@@ -58,14 +80,7 @@
     if (fountain) {
       totalParts = fountain.total;
       scannedFountain = [...scannedFountain, fountain];
-      // Try fountain recovery
-      if (
-        scannedParts.size < totalParts &&
-        fountainRecover(scannedParts, scannedFountain, totalParts)
-      ) {
-        scannedParts = new Map(scannedParts);
-        return reassembleAndFinish();
-      }
+      if (tryFountainAndCheck()) return true;
       return false; // continue scanning
     }
 
@@ -78,18 +93,14 @@
 
     totalParts = part.total;
     scannedParts.set(part.part, part.data);
-    scannedParts = new Map(scannedParts); // trigger reactivity
+    scannedParts = new Map(scannedParts);
+    directScanned = new Set([...directScanned, part.part]);
 
     if (scannedParts.size >= part.total) {
       return reassembleAndFinish();
     }
 
-    // Try fountain recovery with collected parity parts
-    if (scannedFountain.length > 0 && fountainRecover(scannedParts, scannedFountain, totalParts)) {
-      scannedParts = new Map(scannedParts);
-      return reassembleAndFinish();
-    }
-
+    if (tryFountainAndCheck()) return true;
     return false; // continue scanning
   }
 
@@ -97,6 +108,8 @@
     error = null;
     scannedParts = new Map();
     scannedFountain = [];
+    directScanned = new Set();
+    fountainRecovered = new Set();
     totalParts = 0;
     passphraseFromQr = false;
     scanning = true;
@@ -148,6 +161,12 @@
       ? m.sync_qr_progress({ current: scannedParts.size, total: totalParts })
       : undefined,
   );
+
+  const scanSegments = $derived(
+    totalParts > 0
+      ? { total: totalParts, scanned: directScanned, recovered: fountainRecovered }
+      : undefined,
+  );
 </script>
 
 {#if scanning}
@@ -159,6 +178,7 @@
     }}
     oncancel={handleCancelScan}
     progress={scanProgress}
+    segments={scanSegments}
   />
 {/if}
 
@@ -195,14 +215,21 @@
             <Camera size={16} />
             {m.onboarding_scan_qr()}
           </button>
-          {#if scannedParts.size > 0 && scannedParts.size < totalParts}
-            <p class="text-center text-xs text-[var(--color-warning)]">
-              {m.sync_qr_progress({ current: scannedParts.size, total: totalParts })}
-            </p>
-          {:else if encryptedData && totalParts > 0}
-            <p class="text-center text-xs text-[var(--color-success)]">
-              {m.sync_qr_progress({ current: totalParts, total: totalParts })}
-            </p>
+          {#if totalParts > 0}
+            <div class="space-y-1 px-2">
+              <ScanProgressBar
+                total={totalParts}
+                scanned={directScanned}
+                recovered={fountainRecovered}
+              />
+              <p
+                class="text-center text-xs {scannedParts.size >= totalParts
+                  ? 'text-[var(--color-success)]'
+                  : 'text-[var(--color-text-secondary)]'}"
+              >
+                {m.sync_qr_progress({ current: scannedParts.size, total: totalParts })}
+              </p>
+            </div>
           {/if}
           <p class="text-center text-xs text-[var(--color-text-secondary)]">{m.import_or()}</p>
         {/if}
