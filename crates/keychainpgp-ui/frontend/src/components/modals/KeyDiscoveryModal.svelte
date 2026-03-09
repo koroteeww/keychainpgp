@@ -180,8 +180,7 @@
             </div>
             {#if result.source === "WKD"}
               <p class="mt-2 text-xs text-amber-600">
-                This key is served by the email provider via WKD. It may differ from the user's
-                personal key.
+                {m.discovery_wkd_warning()}
               </p>
             {/if}
           </div>
