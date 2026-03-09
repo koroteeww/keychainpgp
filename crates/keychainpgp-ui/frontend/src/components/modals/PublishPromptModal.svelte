@@ -86,11 +86,11 @@
       }).length;
       if (pendingCount > 0) {
         appStore.openModal("notice", {
-          title: "Email Verification Pending",
+          title: m.publish_verification_pending_title(),
           message:
             pendingCount === 1
-              ? "Your key upload is still awaiting email verification. Please click the verification link in your inbox to finish publishing."
-              : "Some key uploads are still awaiting email verification. Please click the verification links in your inbox to finish publishing.",
+              ? m.publish_verification_pending_message_one()
+              : m.publish_verification_pending_message_other(),
         });
         return;
       }
@@ -156,8 +156,7 @@
       <div
         class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
       >
-        Key upload is not complete until you click the verification link sent to
-        your email inbox.
+        {m.publish_verification_notice()}
       </div>
     {/if}
 
