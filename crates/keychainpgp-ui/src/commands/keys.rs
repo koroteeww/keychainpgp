@@ -9,7 +9,7 @@ use tauri::{AppHandle, State};
 use keychainpgp_core::CryptoEngine;
 use keychainpgp_core::types::{KeyGenOptions, TrustLevel, UserId};
 use keychainpgp_keys::network::keyserver::{
-    keyserver_fetch, keyserver_search as ks_search, validate_keyserver_url,
+    KeyserverMatch, keyserver_fetch, keyserver_search as ks_search, validate_keyserver_url,
 };
 use keychainpgp_keys::storage::KeyRecord;
 use secrecy::{ExposeSecret, SecretBox};
@@ -80,6 +80,21 @@ pub struct KeyInfo {
     pub trust_level: i32,
     pub is_own_key: bool,
     pub is_revoked: bool,
+}
+
+/// Key discovery result with source information.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoveryResult {
+    pub fingerprint: String,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub algorithm: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub trust_level: i32,
+    pub is_own_key: bool,
+    pub is_revoked: bool,
+    pub source: String,
 }
 
 impl From<KeyRecord> for KeyInfo {
@@ -497,6 +512,62 @@ pub async fn wkd_lookup(
     }))
 }
 
+/// Fetch a key via WKD and import it into the keyring.
+#[tauri::command]
+pub async fn wkd_fetch_and_import(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    email: String,
+) -> Result<KeyInfo, String> {
+    let proxy = get_proxy_url(&app, &state)?;
+    let key_bytes = keychainpgp_keys::network::wkd::wkd_lookup(&email, proxy.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let cert_info = state
+        .engine
+        .inspect_key(&key_bytes)
+        .map_err(|e| format!("Invalid key data from WKD: {e}"))?;
+
+    let name = cert_info.name().map(String::from);
+    let email_val = cert_info.email().map(String::from);
+
+    let record = KeyRecord {
+        fingerprint: cert_info.fingerprint.0.clone(),
+        name,
+        email: email_val,
+        algorithm: cert_info.algorithm.to_string(),
+        created_at: cert_info.created_at,
+        expires_at: cert_info.expires_at,
+        trust_level: 1,
+        is_own_key: false,
+        is_revoked: cert_info.is_revoked,
+        pgp_data: key_bytes,
+    };
+
+    let keyring = state
+        .keyring
+        .lock()
+        .map_err(|e| format!("Internal error: {e}"))?;
+
+    if keyring
+        .get_key(&record.fingerprint)
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err(format!(
+            "Key already exists in keyring: {}",
+            record.fingerprint
+        ));
+    }
+
+    keyring
+        .import_public_key(record.clone())
+        .map_err(|e| e.to_string())?;
+
+    Ok(KeyInfo::from(record))
+}
+
 /// Search for keys on one or more keyservers.
 ///
 /// If `keyserver_url` contains commas, it is treated as a list of servers to query in parallel.
@@ -506,7 +577,7 @@ pub async fn keyserver_search(
     state: State<'_, AppState>,
     query: String,
     keyserver_url: Option<String>,
-) -> Result<Vec<KeyInfo>, String> {
+) -> Result<Vec<DiscoveryResult>, String> {
     let settings = super::settings::get_settings_internal(&app, &state);
     let url_string = keyserver_url.unwrap_or_else(|| {
         if settings.unverified_keyserver_url.is_empty() {
@@ -553,34 +624,52 @@ pub async fn keyserver_search(
         let sem = semaphore.clone();
         futures.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
-            ks_search(&q, &u, p.as_deref()).await
+            let matches = ks_search(&q, &u, p.as_deref()).await?;
+            Ok::<_, String>((u, matches))
         }));
     }
 
-    let mut all_matches = Vec::new();
+    let mut all_matches: Vec<(String, KeyserverMatch)> = Vec::new();
+    let mut errors = Vec::new();
 
     for handle in futures {
-        if let Ok(Ok(ks_matches)) = handle.await {
-            for m in ks_matches {
-                all_matches.push(m);
+        match handle.await {
+            Ok(Ok((url, ks_matches))) => {
+                for m in ks_matches {
+                    all_matches.push((url.clone(), m));
+                }
             }
+            Ok(Err(e)) => errors.push(e),
+            Err(e) => errors.push(format!("Task failed: {e}")),
         }
     }
 
-    // Deduplicate by fingerprint (or KeyID if fingerprint is missing)
-    let mut unique_keys = std::collections::HashMap::new();
-    for m in all_matches {
+    if all_matches.is_empty() && !errors.is_empty() {
+        return Err(format!(
+            "All keyserver queries failed:\n{}",
+            errors.join("\n")
+        ));
+    }
+
+    // Deduplicate by fingerprint (or KeyID if fingerprint is missing),
+    // collecting all source URLs per key.
+    let mut unique_keys: std::collections::HashMap<String, (Vec<String>, KeyserverMatch)> =
+        std::collections::HashMap::new();
+    for (url, m) in all_matches {
         let id = if m.fingerprint.is_empty() {
-            &m.key_id
+            m.key_id.clone()
         } else {
-            &m.fingerprint
+            m.fingerprint.clone()
         };
-        unique_keys.entry(id.clone()).or_insert(m.clone());
+        unique_keys
+            .entry(id)
+            .and_modify(|(urls, _)| urls.push(url.clone()))
+            .or_insert_with(|| (vec![url], m));
     }
 
     let infos = unique_keys
         .into_values()
-        .map(|m| {
+        .map(|(urls, m)| {
             // Parse "Name <email>" if possible
             let (name, email) = if let Some(uid) = m.user_ids.first() {
                 if let Some(pos) = uid.find('<') {
@@ -594,11 +683,23 @@ pub async fn keyserver_search(
                 (None, None)
             };
 
-            KeyInfo {
+            // Extract hostnames for display
+            let source = urls
+                .iter()
+                .map(|url| {
+                    reqwest::Url::parse(url)
+                        .ok()
+                        .and_then(|u| u.host_str().map(String::from))
+                        .unwrap_or_else(|| url.clone())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            DiscoveryResult {
                 fingerprint: m.fingerprint,
                 name,
                 email,
-                algorithm: String::new(), // Algorithm not always in index
+                algorithm: String::new(),
                 created_at: m
                     .created_at
                     .as_ref()
@@ -608,6 +709,7 @@ pub async fn keyserver_search(
                 trust_level: 0,
                 is_own_key: false,
                 is_revoked: false,
+                source,
             }
         })
         .collect();

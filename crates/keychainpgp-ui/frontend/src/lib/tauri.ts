@@ -17,6 +17,10 @@ export interface KeyInfo {
   is_revoked: boolean;
 }
 
+export interface DiscoveryResult extends KeyInfo {
+  source: string;
+}
+
 export interface EncryptResult {
   success: boolean;
   message: string;
@@ -197,7 +201,14 @@ export async function wkdLookup(email: string): Promise<KeyInfo | null> {
   return invoke("wkd_lookup", { email });
 }
 
-export async function keyserverSearch(query: string, keyserverUrl?: string): Promise<KeyInfo[]> {
+export async function wkdFetchAndImport(email: string): Promise<KeyInfo> {
+  return invoke("wkd_fetch_and_import", { email });
+}
+
+export async function keyserverSearch(
+  query: string,
+  keyserverUrl?: string,
+): Promise<DiscoveryResult[]> {
   return invoke("keyserver_search", { query, keyserverUrl: keyserverUrl ?? null });
 }
 

@@ -55,37 +55,45 @@ pub async fn keyserver_search(
 ) -> Result<Vec<KeyserverMatch>, String> {
     let client = build_client(15, proxy_url)?;
 
-    // Use HKP lookup endpoint with machine-readable option
     let url = format!(
         "{}/pks/lookup?search={}&op=index&options=mr",
         keyserver_url.trim_end_matches('/'),
         urlencoding(query)
     );
 
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Keyserver search failed: {e}"))?;
+    // Retry up to 2 times on 404 — HKP clusters can return inconsistent
+    // results when load-balanced across nodes with different replication state.
+    let max_attempts = 3;
+    for attempt in 1..=max_attempts {
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Keyserver search failed: {e}"))?;
 
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(vec![]);
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            if attempt < max_attempts {
+                continue;
+            }
+            return Ok(vec![]);
+        }
+
+        if !response.status().is_success() {
+            return Err(format!(
+                "Keyserver search failed with status: {}",
+                response.status()
+            ));
+        }
+
+        let body = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read keyserver response: {e}"))?;
+
+        return Ok(parse_mr_index(&body));
     }
 
-    if !response.status().is_success() {
-        return Err(format!(
-            "Keyserver search failed with status: {}",
-            response.status()
-        ));
-    }
-
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read keyserver response: {e}"))?;
-
-    // Parse HKP machine-readable index format
-    Ok(parse_mr_index(&body))
+    Ok(vec![])
 }
 
 /// Fetch a full ASCII-armored public key from a keyserver by fingerprint.

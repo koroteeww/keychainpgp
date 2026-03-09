@@ -182,6 +182,7 @@
   "discovery_found": "Found",
   "discovery_import_hint": "Click Import to add a key to your keyring. Always verify the fingerprint with the key owner.",
   "discovery_import_fail": "Could not retrieve key data for import.",
+  "discovery_wkd_warning": "This key is served by the email provider via WKD. It may differ from the user's personal key.",
   "discovery_close": "Close",
   "publish_prompt_title": "Publish Key",
   "publish_prompt_ask": "Publish this key so others can find you?",
