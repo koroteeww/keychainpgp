@@ -96,7 +96,7 @@ impl Default for Settings {
             theme: "system".into(),
             passphrase_cache_secs: 600,
             keyserver_url: "https://keys.openpgp.org".into(),
-            unverified_keyserver_url: "".into(),
+            unverified_keyserver_url: "https://keyserver.ubuntu.com".into(),
             include_armor_headers: true,
             locale: "auto".into(),
             proxy_url: "socks5h://127.0.0.1:9050".into(),
