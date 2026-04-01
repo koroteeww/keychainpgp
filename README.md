@@ -1,7 +1,8 @@
 <p align="center">
   <img src="crates/keychainpgp-ui/icons/128x128@2x.png" alt="KeychainPGP" width="128" height="128">
 </p>
-
+<h1>this is fork intended only to save source code on my github.
+  all original code is here - <a href="https://github.com/KeychainPGP/keychainpgp?tab=readme-ov-file">https://github.com/KeychainPGP/keychainpgp</a> </h1>
 <h1 align="center">KeychainPGP</h1>
 
 <p align="center">
